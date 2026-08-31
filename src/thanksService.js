@@ -24,6 +24,7 @@ async function sendContactToThanksIo(contact) {
   }
 
   // Construct payload adhering to Thanks.io v2 API specs
+  // Maps Sierra anniversary date to Thanks.io dob (birthdate), anniversary, and custom fields
   const payload = {
     first_name: contact.first_name,
     last_name: contact.last_name,
@@ -36,6 +37,9 @@ async function sendContactToThanksIo(contact) {
     state: contact.state,
     postal_code: contact.zip,
     zip: contact.zip,
+    dob: contact.anniversary_date || null,
+    birthdate: contact.anniversary_date || null,
+    anniversary: contact.anniversary_date || null,
     ...(listId && listId !== 'your_thanks_io_mailing_list_id' ? { mailing_list_id: listId, list_id: listId } : {}),
     custom_fields: {
       anniversary_date: contact.anniversary_date,
