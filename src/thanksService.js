@@ -23,8 +23,9 @@ async function sendContactToThanksIo(contact) {
     throw new Error('THANKS_IO_API_TOKEN is not configured in environment variables.');
   }
 
-  // Construct payload adhering to Thanks.io v2 API specs
-  // Maps Sierra anniversary date to Thanks.io dob (birthdate), anniversary, and custom fields
+  // Construct payload adhering to Thanks.io v2 API specs:
+  // - dob/birthdate: mapped to Sierra Anniversary Date
+  // - custom1: mapped to Sierra Assigned Agent
   const payload = {
     first_name: contact.first_name,
     last_name: contact.last_name,
@@ -43,10 +44,11 @@ async function sendContactToThanksIo(contact) {
     ...(listId && listId !== 'your_thanks_io_mailing_list_id' ? { mailing_list_id: listId, list_id: listId } : {}),
     custom_fields: {
       anniversary_date: contact.anniversary_date,
+      assigned_agent: contact.assigned_agent,
       email: contact.email,
       phone: contact.phone
     },
-    custom1: contact.anniversary_date
+    custom1: contact.assigned_agent || ''
   };
 
   if (isTestMode) {

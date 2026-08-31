@@ -4,8 +4,8 @@ const axios = require('axios');
 const leadCustomFieldCache = new Map();
 
 /**
- * Fetch lead details from Sierra Interactive API if lead ID is provided.
- * Base URL: https://api.sierrainteractivedev.com
+ * Fetch lead details from Sierra Interactive API using query parameters to include all tags and lead data.
+ * Endpoint: GET https://api.sierrainteractivedev.com/leads/get/{leadId}?includeTags=true
  */
 async function fetchLeadFromSierra(leadId) {
   const apiKey = process.env.SIERRA_API_KEY;
@@ -15,7 +15,7 @@ async function fetchLeadFromSierra(leadId) {
     throw new Error('SIERRA_API_KEY is not configured in environment variables.');
   }
 
-  const url = `https://api.sierrainteractivedev.com/leads/get/${leadId}`;
+  const url = `https://api.sierrainteractivedev.com/leads/get/${leadId}?includeTags=true&includeActionPlans=true`;
   
   try {
     const response = await axios.get(url, {
@@ -35,39 +35,40 @@ async function fetchLeadFromSierra(leadId) {
 
 /**
  * Helper to scan and extract anniversary date from custom field 'Home Anniv.', 'Home Anniv',
- * 'homeAnniversaryDate', changes array, customFields object/array, or any key matching /anniv/i.
+ * 'homeAnniversaryDate', 'birthDate', changes array, customFields object/array, or any key matching /anniv|birth/i.
  */
 function findAnniversaryInPayload(payload, data) {
   // 1. Check changes array in webhook payload (Sierra LeadDetailsChanged)
   const changes = payload?.data?.changes || payload?.changes;
   if (Array.isArray(changes)) {
-    const changeMatch = changes.find(c => /anniv|anniversary/i.test(c.key || c.name || ''));
+    const changeMatch = changes.find(c => /anniv|anniversary|birth/i.test(c.key || c.name || ''));
     if (changeMatch && changeMatch.value) return changeMatch.value;
   }
 
-  // 2. Direct property checks
-  const direct = data?.['Home Anniv.'] || data?.['Home Anniv'] || data?.homeAnniv || data?.home_anniv ||
-                 data?.homeAnniversaryDate || data?.homeAnniversary || data?.birthDate || data?.birthdate ||
+  // 2. Direct property checks on lead object
+  const direct = data?.homeAnniversaryDate || data?.homeAnniversary || data?.birthDate || data?.birthdate ||
+                 data?.['Home Anniv.'] || data?.['Home Anniv'] || data?.homeAnniv || data?.home_anniv ||
                  data?.anniversaryDate || data?.closeAnniversaryDate || data?.anniversary ||
+                 payload?.homeAnniversaryDate || payload?.homeAnniversary || payload?.birthDate || payload?.birthdate ||
                  payload?.['Home Anniv.'] || payload?.['Home Anniv'] || payload?.homeAnniv || payload?.home_anniv ||
-                 payload?.homeAnniversaryDate || payload?.homeAnniversary || payload?.data?.['Home Anniv.'] || payload?.data?.['Home Anniv'];
+                 payload?.data?.['Home Anniv.'] || payload?.data?.['Home Anniv'] || payload?.data?.birthDate;
   if (direct) return direct;
 
   // 3. Check customFields array or object
   const customFields = data?.customFields || payload?.customFields || data?.custom_fields || payload?.custom_fields || payload?.data?.customFields;
   if (Array.isArray(customFields)) {
-    const match = customFields.find(cf => /anniv|anniversary/i.test(cf.name || cf.key || cf.label || ''));
+    const match = customFields.find(cf => /anniv|anniversary|birth/i.test(cf.name || cf.key || cf.label || ''));
     if (match) return match.value || match.val || match.defaultValue;
   } else if (customFields && typeof customFields === 'object') {
     const keys = Object.keys(customFields);
-    const matchKey = keys.find(k => /anniv|anniversary/i.test(k));
+    const matchKey = keys.find(k => /anniv|anniversary|birth/i.test(k));
     if (matchKey) return customFields[matchKey];
   }
 
-  // 4. Fallback search across all root keys of data and payload for any key containing 'anniv'
+  // 4. Fallback search across all root keys of data and payload for any key containing 'anniv' or 'birth'
   const allObj = { ...payload, ...payload?.data, ...data };
   for (const k of Object.keys(allObj)) {
-    if (/anniv|anniversary/i.test(k) && allObj[k]) {
+    if (/anniv|anniversary|birth/i.test(k) && allObj[k]) {
       const val = allObj[k];
       if (typeof val === 'string' || typeof val === 'number') return val;
       if (typeof val === 'object' && (val.value || val.val)) return val.value || val.val;
@@ -126,6 +127,14 @@ function extractContactDetails(payload) {
     phone = data.cellPhone || data.mobilePhone || data.workPhone || '';
   }
 
+  // Assigned Agent (Sierra assignedTo object)
+  let assignedAgent = '';
+  if (data.assignedTo && typeof data.assignedTo === 'object') {
+    const first = data.assignedTo.agentUserFirstName || '';
+    const last = data.assignedTo.agentUserLastName || '';
+    assignedAgent = `${first} ${last}`.trim() || data.assignedTo.agentUserEmail || '';
+  }
+
   // Address components
   const addressObj = data.primaryAddress || data.addressDetails || (typeof data.address === 'object' ? data.address : {});
   let streetAddress = data.streetAddress || data.street_address || (typeof data.address === 'string' ? data.address : '');
@@ -140,7 +149,7 @@ function extractContactDetails(payload) {
     if (!zip) zip = addressObj.zipCode || addressObj.zip || addressObj.postalCode || '';
   }
 
-  // Anniversary Date parsing (specifically targets 'Home Anniv.')
+  // Anniversary Date / Birthdate parsing
   let rawAnniversaryDate = findAnniversaryInPayload(payload, data);
 
   // Cache extracted custom anniversary date by leadId if found
@@ -177,6 +186,7 @@ function extractContactDetails(payload) {
     city: city.trim(),
     state: state.trim(),
     zip: zip.trim(),
+    assigned_agent: assignedAgent,
     anniversary_date: anniversaryDate,
     raw_anniversary: rawAnniversaryDate,
     tags: tagList

@@ -44,7 +44,7 @@ app.post('/webhook/sierra-tag', async (req, res) => {
       leadCustomFieldCache.set(String(contact.sierraId), rawAnniv);
     }
 
-    // 2. Fetch full lead profile from Sierra API if sierraId is present
+    // 2. Fetch full lead profile from Sierra API using query string parameters for complete details
     if (contact.sierraId) {
       console.log(`[Sierra API] Fetching complete profile for Lead ID: ${contact.sierraId}...`);
       try {
@@ -57,6 +57,7 @@ app.post('/webhook/sierra-tag', async (req, res) => {
           ...fullContact,
           sierraId: contact.sierraId,
           anniversary_date: initialContact.anniversary_date || fullContact.anniversary_date || cachedAnniv || '',
+          assigned_agent: fullContact.assigned_agent || initialContact.assigned_agent || '',
           tags: Array.from(new Set([...initialContact.tags, ...fullContact.tags]))
         };
       } catch (fetchErr) {
@@ -97,7 +98,8 @@ app.post('/webhook/sierra-tag', async (req, res) => {
       'City': contact.city || '(N/A)',
       'State': contact.state || '(N/A)',
       'Zip': contact.zip || '(N/A)',
-      'Anniversary Date (Home Anniv.)': contact.anniversary_date || '(N/A)',
+      'Assigned Agent (custom1)': contact.assigned_agent || '(N/A)',
+      'Anniversary Date (dob)': contact.anniversary_date || '(N/A)',
       'Tags': contact.tags.join(', ')
     });
 
