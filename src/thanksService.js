@@ -71,8 +71,8 @@ async function sendContactToThanksIo(contact) {
 
     // Handle case where API returns HTTP 200 but response body indicates duplicate address failure
     if (response.data && response.data.failure && String(response.data.errors || response.data.error).includes('already on this mailing list')) {
-      console.log('[Thanks.io Duplicate Encountered] Retrying after force-clearing existing recipient...');
-      await forceDeleteByAddressOrName(contact, token, listId);
+      console.log('[Thanks.io Duplicate Encountered] Force clearing existing recipient record and retrying...');
+      await removeExistingRecipientIfAny(contact, token, listId);
       
       // Retry POST recipient
       response = await axios.post('https://api.thanks.io/api/v2/recipients', payload, {
@@ -106,19 +106,31 @@ async function removeExistingRecipientIfAny(contact, token, listId) {
     const emailLower = (contact.email || '').trim().toLowerCase();
     const streetLower = (contact.street_address || '').trim().toLowerCase();
 
-    // Query list recipients
-    const searchUrl = listId && listId !== 'your_thanks_io_mailing_list_id'
-      ? `https://api.thanks.io/api/v2/recipients?mailing_list_id=${listId}&limit=200`
-      : `https://api.thanks.io/api/v2/recipients?limit=200`;
+    // Search endpoints to query list recipients
+    const searchUrls = [];
+    if (listId && listId !== 'your_thanks_io_mailing_list_id') {
+      searchUrls.push(`https://api.thanks.io/api/v2/recipients?mailing_list_id=${listId}&limit=200`);
+      searchUrls.push(`https://api.thanks.io/api/v2/mailing-lists/${listId}/recipients?limit=200`);
+    } else {
+      searchUrls.push(`https://api.thanks.io/api/v2/recipients?limit=200`);
+    }
 
-    const response = await axios.get(searchUrl, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/json'
-      }
-    });
-
-    const records = response.data?.data || response.data?.recipients || (Array.isArray(response.data) ? response.data : []);
+    let records = [];
+    for (const url of searchUrls) {
+      try {
+        const res = await axios.get(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+        const found = res.data?.data || res.data?.recipients || (Array.isArray(res.data) ? res.data : []);
+        if (Array.isArray(found) && found.length > 0) {
+          records = found;
+          break;
+        }
+      } catch (_) {}
+    }
 
     const matches = records.filter(r => {
       const rName = (r.name || `${r.first_name || ''} ${r.last_name || ''}`).trim().toLowerCase();
@@ -133,20 +145,26 @@ async function removeExistingRecipientIfAny(contact, token, listId) {
     });
 
     if (matches.length > 0) {
-      console.log(`[Thanks.io Pre-Check] Found ${matches.length} old matching recipient(s) for '${contact.first_name} ${contact.last_name}'. Removing old entry...`);
+      console.log(`[Thanks.io Pre-Check] Found ${matches.length} old matching recipient(s) for '${contact.first_name} ${contact.last_name}'. Deleting old entry...`);
       for (const m of matches) {
         const recId = m.id || m.recipient_id;
         if (recId) {
-          try {
-            await axios.delete(`https://api.thanks.io/api/v2/recipients/${recId}`, {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Accept': 'application/json'
-              }
-            });
-            console.log(`[Thanks.io] Removed old recipient ID: ${recId}`);
-          } catch (delErr) {
-            console.warn(`[Thanks.io Warning] Could not delete old recipient ID ${recId}:`, delErr.message);
+          const deleteEndpoints = [
+            `https://api.thanks.io/api/v2/recipients/${recId}`,
+            listId ? `https://api.thanks.io/api/v2/mailing-lists/${listId}/recipients/${recId}` : null
+          ].filter(Boolean);
+
+          for (const delUrl of deleteEndpoints) {
+            try {
+              await axios.delete(delUrl, {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Accept': 'application/json'
+                }
+              });
+              console.log(`[Thanks.io] Successfully removed old recipient ID ${recId} via ${delUrl}`);
+              break;
+            } catch (_) {}
           }
         }
       }
@@ -154,13 +172,6 @@ async function removeExistingRecipientIfAny(contact, token, listId) {
   } catch (err) {
     console.warn(`[Thanks.io Warning] Pre-creation search for existing recipient encountered issue:`, err.message);
   }
-}
-
-/**
- * Fallback to force delete any recipient with matching address or name
- */
-async function forceDeleteByAddressOrName(contact, token, listId) {
-  await removeExistingRecipientIfAny(contact, token, listId);
 }
 
 module.exports = {
