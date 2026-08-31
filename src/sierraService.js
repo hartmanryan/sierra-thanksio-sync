@@ -34,45 +34,34 @@ async function fetchLeadFromSierra(leadId) {
 }
 
 /**
- * Helper to scan and extract anniversary date from custom field 'Home Anniv.', 'Home Anniv',
- * 'homeAnniversaryDate', 'birthDate', changes array, customFields object/array, or any key matching /anniv|birth/i.
+ * Helper to scan and extract anniversary date specifically from 'Home Anniv.', 'Home Anniv',
+ * 'homeAnniversaryDate', 'birthDate', changes array, or customFields matching /home\s*anniv|anniversary/i.
  */
 function findAnniversaryInPayload(payload, data) {
-  // 1. Check changes array in webhook payload (Sierra LeadDetailsChanged)
+  // 1. Direct property checks on lead object or payload
+  const direct = data?.['Home Anniv.'] || data?.['Home Anniv'] || data?.homeAnniv || data?.home_anniv ||
+                 data?.homeAnniversaryDate || data?.homeAnniversary || data?.birthDate || data?.birthdate ||
+                 data?.anniversaryDate || data?.closeAnniversaryDate || data?.anniversary ||
+                 payload?.['Home Anniv.'] || payload?.['Home Anniv'] || payload?.homeAnniv || payload?.home_anniv ||
+                 payload?.homeAnniversaryDate || payload?.homeAnniversary || payload?.data?.['Home Anniv.'] || payload?.data?.['Home Anniv'];
+  if (direct) return direct;
+
+  // 2. Check changes array in LeadDetailsChanged webhook payload
   const changes = payload?.data?.changes || payload?.changes;
   if (Array.isArray(changes)) {
-    const changeMatch = changes.find(c => /anniv|anniversary|birth/i.test(c.key || c.name || ''));
+    const changeMatch = changes.find(c => /home\s*anniv|anniversary/i.test(c.key || c.name || ''));
     if (changeMatch && changeMatch.value) return changeMatch.value;
   }
-
-  // 2. Direct property checks on lead object
-  const direct = data?.homeAnniversaryDate || data?.homeAnniversary || data?.birthDate || data?.birthdate ||
-                 data?.['Home Anniv.'] || data?.['Home Anniv'] || data?.homeAnniv || data?.home_anniv ||
-                 data?.anniversaryDate || data?.closeAnniversaryDate || data?.anniversary ||
-                 payload?.homeAnniversaryDate || payload?.homeAnniversary || payload?.birthDate || payload?.birthdate ||
-                 payload?.['Home Anniv.'] || payload?.['Home Anniv'] || payload?.homeAnniv || payload?.home_anniv ||
-                 payload?.data?.['Home Anniv.'] || payload?.data?.['Home Anniv'] || payload?.data?.birthDate;
-  if (direct) return direct;
 
   // 3. Check customFields array or object
   const customFields = data?.customFields || payload?.customFields || data?.custom_fields || payload?.custom_fields || payload?.data?.customFields;
   if (Array.isArray(customFields)) {
-    const match = customFields.find(cf => /anniv|anniversary|birth/i.test(cf.name || cf.key || cf.label || ''));
+    const match = customFields.find(cf => /home\s*anniv|anniversary/i.test(cf.name || cf.key || cf.label || ''));
     if (match) return match.value || match.val || match.defaultValue;
   } else if (customFields && typeof customFields === 'object') {
     const keys = Object.keys(customFields);
-    const matchKey = keys.find(k => /anniv|anniversary|birth/i.test(k));
+    const matchKey = keys.find(k => /home\s*anniv|anniversary/i.test(k));
     if (matchKey) return customFields[matchKey];
-  }
-
-  // 4. Fallback search across all root keys of data and payload for any key containing 'anniv' or 'birth'
-  const allObj = { ...payload, ...payload?.data, ...data };
-  for (const k of Object.keys(allObj)) {
-    if (/anniv|anniversary|birth/i.test(k) && allObj[k]) {
-      const val = allObj[k];
-      if (typeof val === 'string' || typeof val === 'number') return val;
-      if (typeof val === 'object' && (val.value || val.val)) return val.value || val.val;
-    }
   }
 
   return '';
