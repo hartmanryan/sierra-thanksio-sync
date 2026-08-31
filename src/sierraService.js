@@ -36,9 +36,16 @@ async function fetchLeadFromSierra(leadId) {
 function extractContactDetails(payload) {
   const data = payload?.data || payload?.lead || payload || {};
 
-  // Extract Sierra Lead ID from any level of the payload
-  const sierraId = payload?.leadId || payload?.lead_id || payload?.LeadId || payload?.id || payload?.entityId ||
-                   data?.id || data?.leadId || data?.lead_id || null;
+  // Extract Sierra Lead ID from resourceList array (Sierra's standard webhook format) or leadId fields
+  let sierraId = null;
+  if (Array.isArray(payload?.resourceList) && payload.resourceList.length > 0) {
+    sierraId = payload.resourceList[0];
+  } else if (Array.isArray(payload?.resource_list) && payload.resource_list.length > 0) {
+    sierraId = payload.resource_list[0];
+  } else {
+    sierraId = payload?.leadId || payload?.lead_id || payload?.LeadId || payload?.id || payload?.entityId ||
+               data?.id || data?.leadId || data?.lead_id || null;
+  }
 
   // First Name & Last Name
   let firstName = data.firstName || data.first_name || '';
@@ -72,23 +79,18 @@ function extractContactDetails(payload) {
     phone = data.cellPhone || data.mobilePhone || data.workPhone || '';
   }
 
-  // Address components
-  const addressObj = data.primaryAddress || data.addressDetails || data.address || {};
-  let streetAddress = '';
-  let city = '';
-  let state = '';
-  let zip = '';
+  // Address components (checks data.streetAddress directly as returned by Sierra API)
+  const addressObj = data.primaryAddress || data.addressDetails || (typeof data.address === 'object' ? data.address : {});
+  let streetAddress = data.streetAddress || data.street_address || (typeof data.address === 'string' ? data.address : '');
+  let city = data.city || '';
+  let state = data.state || data.province || '';
+  let zip = data.zipCode || data.zip || data.postalCode || '';
 
-  if (typeof addressObj === 'string') {
-    streetAddress = addressObj;
-    city = data.city || '';
-    state = data.state || data.province || '';
-    zip = data.zipCode || data.zip || data.postalCode || '';
-  } else {
-    streetAddress = addressObj.street || addressObj.streetAddress || addressObj.address || addressObj.line1 || data.street_address || data.address || '';
-    city = addressObj.city || data.city || '';
-    state = addressObj.state || addressObj.province || data.state || '';
-    zip = addressObj.zipCode || addressObj.zip || addressObj.postalCode || data.zip || data.zipCode || '';
+  if (!streetAddress && addressObj) {
+    streetAddress = addressObj.street || addressObj.streetAddress || addressObj.address || addressObj.line1 || '';
+    if (!city) city = addressObj.city || '';
+    if (!state) state = addressObj.state || addressObj.province || '';
+    if (!zip) zip = addressObj.zipCode || addressObj.zip || addressObj.postalCode || '';
   }
 
   // Anniversary Date
@@ -121,7 +123,7 @@ function extractContactDetails(payload) {
   }
 
   // Tags attached
-  const rawTags = data.tags || payload?.tags || payload?.tag || payload?.tagName || payload?.Tag || payload?.tag_name || [];
+  const rawTags = data.tags || payload?.data?.tag || payload?.tags || payload?.tag || payload?.tagName || payload?.Tag || payload?.tag_name || [];
   const tagList = Array.isArray(rawTags) 
     ? rawTags.map(t => typeof t === 'string' ? t : (t.name || t.tagName || ''))
     : (typeof rawTags === 'string' ? [rawTags] : []);
