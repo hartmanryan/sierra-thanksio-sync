@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { extractContactDetails, fetchLeadFromSierra } = require('./sierraService');
+const { extractContactDetails, fetchLeadFromSierra, findAnniversaryInPayload, leadCustomFieldCache } = require('./sierraService');
 const { sendContactToThanksIo } = require('./thanksService');
 
 const app = express();
@@ -24,7 +24,7 @@ app.get('/health', (req, res) => {
 });
 
 /**
- * Webhook endpoint for Sierra Interactive tag events
+ * Webhook endpoint for Sierra Interactive events (LeadTagAdded, LeadDetailsChanged)
  * POST /webhook/sierra-tag
  */
 app.post('/webhook/sierra-tag', async (req, res) => {
@@ -37,18 +37,26 @@ app.post('/webhook/sierra-tag', async (req, res) => {
     let initialContact = extractContactDetails(payload);
     let contact = { ...initialContact };
 
-    // Fetch full lead profile if sierraId is present
+    // 1. Check if payload is a LeadDetailsChanged event updating Home Anniv.
+    const rawAnniv = findAnniversaryInPayload(payload, payload.data || {});
+    if (contact.sierraId && rawAnniv) {
+      console.log(`[Custom Field Captured] Lead ID ${contact.sierraId} 'Home Anniv.': ${rawAnniv}`);
+      leadCustomFieldCache.set(String(contact.sierraId), rawAnniv);
+    }
+
+    // 2. Fetch full lead profile from Sierra API if sierraId is present
     if (contact.sierraId) {
       console.log(`[Sierra API] Fetching complete profile for Lead ID: ${contact.sierraId}...`);
       try {
         const fullLeadPayload = await fetchLeadFromSierra(contact.sierraId);
         const fullContact = extractContactDetails(fullLeadPayload);
 
-        // Merge details: preserve any custom 'Home Anniv.' date captured from initial webhook payload
+        // Merge details: preserve any custom 'Home Anniv.' date captured from payload or cache
+        const cachedAnniv = leadCustomFieldCache.get(String(contact.sierraId)) || '';
         contact = {
           ...fullContact,
           sierraId: contact.sierraId,
-          anniversary_date: initialContact.anniversary_date || fullContact.anniversary_date || '',
+          anniversary_date: initialContact.anniversary_date || fullContact.anniversary_date || cachedAnniv || '',
           tags: Array.from(new Set([...initialContact.tags, ...fullContact.tags]))
         };
       } catch (fetchErr) {
@@ -62,14 +70,15 @@ app.post('/webhook/sierra-tag', async (req, res) => {
       contact.tags.push(payloadDirectTag);
     }
 
-    // Verify trigger tag filtering
+    // If eventType is LeadDetailsChanged and tag filtering is active, only proceed if tagged
+    const eventType = payload.eventType || payload.event_type || '';
     const configuredTag = process.env.TRIGGER_TAG;
     if (configuredTag && configuredTag.trim() !== '' && configuredTag.toUpperCase() !== 'ANY') {
       const targetLower = configuredTag.trim().toLowerCase();
       const hasMatchingTag = contact.tags.some(t => typeof t === 'string' && t.trim().toLowerCase() === targetLower);
 
       if (!hasMatchingTag) {
-        console.log(`[Tag Filter] Skipped Lead ID ${contact.sierraId || 'N/A'}. Tag '${configuredTag}' not found in contact tags:`, contact.tags);
+        console.log(`[Tag Filter] Skipped Lead ID ${contact.sierraId || 'N/A'} (event: ${eventType}). Tag '${configuredTag}' not found in contact tags:`, contact.tags);
         return res.status(200).json({
           status: 'skipped',
           reason: `Tag '${configuredTag}' was not found on contact. Found tags: ${JSON.stringify(contact.tags)}`

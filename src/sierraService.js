@@ -1,5 +1,8 @@
 const axios = require('axios');
 
+// In-memory cache to store custom field changes (e.g. Home Anniv.) by Sierra Lead ID
+const leadCustomFieldCache = new Map();
+
 /**
  * Fetch lead details from Sierra Interactive API if lead ID is provided.
  * Base URL: https://api.sierrainteractivedev.com
@@ -35,23 +38,20 @@ async function fetchLeadFromSierra(leadId) {
  * 'homeAnniversaryDate', changes array, customFields object/array, or any key matching /anniv/i.
  */
 function findAnniversaryInPayload(payload, data) {
-  // 1. Direct property checks
+  // 1. Check changes array in webhook payload (Sierra LeadDetailsChanged)
+  const changes = payload?.data?.changes || payload?.changes;
+  if (Array.isArray(changes)) {
+    const changeMatch = changes.find(c => /anniv|anniversary/i.test(c.key || c.name || ''));
+    if (changeMatch && changeMatch.value) return changeMatch.value;
+  }
+
+  // 2. Direct property checks
   const direct = data?.['Home Anniv.'] || data?.['Home Anniv'] || data?.homeAnniv || data?.home_anniv ||
                  data?.homeAnniversaryDate || data?.homeAnniversary || data?.birthDate || data?.birthdate ||
                  data?.anniversaryDate || data?.closeAnniversaryDate || data?.anniversary ||
                  payload?.['Home Anniv.'] || payload?.['Home Anniv'] || payload?.homeAnniv || payload?.home_anniv ||
                  payload?.homeAnniversaryDate || payload?.homeAnniversary || payload?.data?.['Home Anniv.'] || payload?.data?.['Home Anniv'];
   if (direct) return direct;
-
-  // 2. Check changes array in webhook payload
-  if (Array.isArray(payload?.data?.changes)) {
-    const changeMatch = payload.data.changes.find(c => /anniv|anniversary/i.test(c.key || c.name || ''));
-    if (changeMatch && changeMatch.value) return changeMatch.value;
-  }
-  if (Array.isArray(payload?.changes)) {
-    const changeMatch = payload.changes.find(c => /anniv|anniversary/i.test(c.key || c.name || ''));
-    if (changeMatch && changeMatch.value) return changeMatch.value;
-  }
 
   // 3. Check customFields array or object
   const customFields = data?.customFields || payload?.customFields || data?.custom_fields || payload?.custom_fields || payload?.data?.customFields;
@@ -83,7 +83,7 @@ function findAnniversaryInPayload(payload, data) {
 function extractContactDetails(payload) {
   const data = payload?.data || payload?.lead || payload || {};
 
-  // Extract Sierra Lead ID from resourceList array (Sierra's standard webhook format) or leadId fields
+  // Extract Sierra Lead ID from resourceList array or leadId fields
   let sierraId = null;
   if (Array.isArray(payload?.resourceList) && payload.resourceList.length > 0) {
     sierraId = payload.resourceList[0];
@@ -140,8 +140,16 @@ function extractContactDetails(payload) {
     if (!zip) zip = addressObj.zipCode || addressObj.zip || addressObj.postalCode || '';
   }
 
-  // Anniversary Date parsing (specifically targets 'Home Anniv.' from custom fields/payload)
+  // Anniversary Date parsing (specifically targets 'Home Anniv.')
   let rawAnniversaryDate = findAnniversaryInPayload(payload, data);
+
+  // Cache extracted custom anniversary date by leadId if found
+  if (sierraId && rawAnniversaryDate) {
+    leadCustomFieldCache.set(String(sierraId), rawAnniversaryDate);
+  } else if (sierraId && !rawAnniversaryDate && leadCustomFieldCache.has(String(sierraId))) {
+    rawAnniversaryDate = leadCustomFieldCache.get(String(sierraId));
+  }
+
   let anniversaryDate = rawAnniversaryDate ? String(rawAnniversaryDate).trim() : '';
 
   if (anniversaryDate) {
@@ -178,5 +186,6 @@ function extractContactDetails(payload) {
 module.exports = {
   fetchLeadFromSierra,
   extractContactDetails,
-  findAnniversaryInPayload
+  findAnniversaryInPayload,
+  leadCustomFieldCache
 };
