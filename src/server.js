@@ -28,42 +28,58 @@ app.get('/health', (req, res) => {
  * POST /webhook/sierra-tag
  */
 app.post('/webhook/sierra-tag', async (req, res) => {
-  console.log(`\n[Webhook Received] ${new Date().toISOString()}`);
-  
+  console.log(`\n=================================================`);
+  console.log(`[Webhook Received] ${new Date().toISOString()}`);
+  console.log('[Raw Incoming Payload]:', JSON.stringify(req.body, null, 2));
+
   try {
     const payload = req.body;
-    let contact = extractContactDetails(payload);
+    let initialContact = extractContactDetails(payload);
+    let contact = { ...initialContact };
 
-    // If tag filtering is enabled, verify tag
-    const configuredTag = process.env.TRIGGER_TAG;
-    if (configuredTag && configuredTag.toUpperCase() !== 'ANY') {
-      const addedTag = payload.tag || payload.tagName || payload.eventData?.tag || '';
-      const hasMatchingTag = contact.tags.some(t => t.toLowerCase() === configuredTag.toLowerCase()) || 
-                             (typeof addedTag === 'string' && addedTag.toLowerCase() === configuredTag.toLowerCase());
-
-      if (!hasMatchingTag) {
-        console.log(`[Tag Filter] Skipped contact ${contact.first_name} ${contact.last_name}. Tag '${configuredTag}' not found in contact tags:`, contact.tags);
-        return res.status(200).json({
-          status: 'skipped',
-          reason: `Tag '${configuredTag}' was not found on contact.`
-        });
-      }
-    }
-
-    // If address or key fields are missing from initial webhook payload, fetch full lead record from Sierra API
-    const isMissingFields = !contact.street_address || !contact.city || !contact.email || !contact.phone;
-    if (isMissingFields && contact.sierraId) {
-      console.log(`[Sierra API] Contact payload incomplete. Fetching full lead profile for ID: ${contact.sierraId}...`);
+    // Sierra Webhooks for LeadTagAdded send the leadId in the payload.
+    // Fetch full lead profile if leadId is available to ensure all 9 contact fields & full tag list are present.
+    if (contact.sierraId) {
+      console.log(`[Sierra API] Fetching complete profile for Lead ID: ${contact.sierraId}...`);
       try {
         const fullLeadPayload = await fetchLeadFromSierra(contact.sierraId);
-        contact = extractContactDetails(fullLeadPayload);
+        const fullContact = extractContactDetails(fullLeadPayload);
+
+        // Merge initial webhook data with full profile details
+        contact = {
+          ...fullContact,
+          sierraId: contact.sierraId,
+          tags: Array.from(new Set([...initialContact.tags, ...fullContact.tags]))
+        };
       } catch (fetchErr) {
         console.warn(`[Sierra Warning] Could not fetch extended lead profile: ${fetchErr.message}`);
       }
     }
 
-    console.log('[Contact Extracted Successfully]:');
+    // Direct tag fields from payload
+    const payloadDirectTag = payload.tag || payload.tagName || payload.Tag || payload.tag_name || payload.data?.tag || payload.data?.tagName || '';
+    if (payloadDirectTag && !contact.tags.includes(payloadDirectTag)) {
+      contact.tags.push(payloadDirectTag);
+    }
+
+    // Verify trigger tag filtering
+    const configuredTag = process.env.TRIGGER_TAG;
+    if (configuredTag && configuredTag.trim() !== '' && configuredTag.toUpperCase() !== 'ANY') {
+      const targetLower = configuredTag.trim().toLowerCase();
+      const hasMatchingTag = contact.tags.some(t => typeof t === 'string' && t.trim().toLowerCase() === targetLower);
+
+      if (!hasMatchingTag) {
+        console.log(`[Tag Filter] Skipped Lead ID ${contact.sierraId || 'N/A'}. Tag '${configuredTag}' not found in contact tags:`, contact.tags);
+        return res.status(200).json({
+          status: 'skipped',
+          reason: `Tag '${configuredTag}' was not found on contact. Found tags: ${JSON.stringify(contact.tags)}`
+        });
+      }
+    }
+
+    console.log('[Contact Details Ready for Thanks.io]:');
     console.table({
+      'Lead ID': contact.sierraId || '(N/A)',
       'First Name': contact.first_name || '(N/A)',
       'Last Name': contact.last_name || '(N/A)',
       'Email': contact.email || '(N/A)',
@@ -72,7 +88,8 @@ app.post('/webhook/sierra-tag', async (req, res) => {
       'City': contact.city || '(N/A)',
       'State': contact.state || '(N/A)',
       'Zip': contact.zip || '(N/A)',
-      'Anniversary Date': contact.anniversary_date || '(N/A)'
+      'Anniversary Date': contact.anniversary_date || '(N/A)',
+      'Tags': contact.tags.join(', ')
     });
 
     // Send recipient details to Thanks.io

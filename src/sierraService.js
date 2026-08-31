@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 /**
- * Fetch lead details from Sierra Interactive API if only lead ID is provided.
+ * Fetch lead details from Sierra Interactive API if lead ID is provided.
  * Base URL: https://api.sierrainteractivedev.com
  */
 async function fetchLeadFromSierra(leadId) {
@@ -32,19 +32,13 @@ async function fetchLeadFromSierra(leadId) {
 
 /**
  * Extract and normalize contact data from Sierra Interactive webhook or API payload.
- * Extract 9 required fields:
- * - first_name
- * - last_name
- * - email
- * - phone
- * - street_address
- * - city
- * - state
- * - zip
- * - anniversary_date
  */
 function extractContactDetails(payload) {
   const data = payload?.data || payload?.lead || payload || {};
+
+  // Extract Sierra Lead ID from any level of the payload
+  const sierraId = payload?.leadId || payload?.lead_id || payload?.LeadId || payload?.id || payload?.entityId ||
+                   data?.id || data?.leadId || data?.lead_id || null;
 
   // First Name & Last Name
   let firstName = data.firstName || data.first_name || '';
@@ -98,7 +92,6 @@ function extractContactDetails(payload) {
   }
 
   // Anniversary Date
-  // Check common Sierra anniversary field names: homeAnniversaryDate, anniversaryDate, closeAnniversaryDate, customFields
   let anniversaryDate = data.homeAnniversaryDate || 
                         data.anniversaryDate || 
                         data.closeAnniversaryDate || 
@@ -118,26 +111,23 @@ function extractContactDetails(payload) {
     }
   }
 
-  // Formatting date string if present
   if (anniversaryDate) {
     try {
       const parsedDate = new Date(anniversaryDate);
       if (!isNaN(parsedDate.getTime())) {
         anniversaryDate = parsedDate.toISOString().split('T')[0]; // YYYY-MM-DD
       }
-    } catch (_) {
-      // keep original string if parsing fails
-    }
+    } catch (_) {}
   }
 
   // Tags attached
-  const tags = data.tags || payload.tags || payload.tag || [];
-  const tagList = Array.isArray(tags) 
-    ? tags.map(t => typeof t === 'string' ? t : (t.name || t.tagName || ''))
-    : (typeof tags === 'string' ? [tags] : []);
+  const rawTags = data.tags || payload?.tags || payload?.tag || payload?.tagName || payload?.Tag || payload?.tag_name || [];
+  const tagList = Array.isArray(rawTags) 
+    ? rawTags.map(t => typeof t === 'string' ? t : (t.name || t.tagName || ''))
+    : (typeof rawTags === 'string' ? [rawTags] : []);
 
   return {
-    sierraId: data.id || data.leadId || payload.leadId || null,
+    sierraId: sierraId ? String(sierraId).trim() : null,
     first_name: firstName.trim(),
     last_name: lastName.trim(),
     email: email.trim(),
