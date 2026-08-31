@@ -37,18 +37,18 @@ app.post('/webhook/sierra-tag', async (req, res) => {
     let initialContact = extractContactDetails(payload);
     let contact = { ...initialContact };
 
-    // Sierra Webhooks for LeadTagAdded send the leadId in the payload.
-    // Fetch full lead profile if leadId is available to ensure all 9 contact fields & full tag list are present.
+    // Fetch full lead profile if sierraId is present
     if (contact.sierraId) {
       console.log(`[Sierra API] Fetching complete profile for Lead ID: ${contact.sierraId}...`);
       try {
         const fullLeadPayload = await fetchLeadFromSierra(contact.sierraId);
         const fullContact = extractContactDetails(fullLeadPayload);
 
-        // Merge initial webhook data with full profile details
+        // Merge details: preserve any custom 'Home Anniv.' date captured from initial webhook payload
         contact = {
           ...fullContact,
           sierraId: contact.sierraId,
+          anniversary_date: initialContact.anniversary_date || fullContact.anniversary_date || '',
           tags: Array.from(new Set([...initialContact.tags, ...fullContact.tags]))
         };
       } catch (fetchErr) {
@@ -88,7 +88,7 @@ app.post('/webhook/sierra-tag', async (req, res) => {
       'City': contact.city || '(N/A)',
       'State': contact.state || '(N/A)',
       'Zip': contact.zip || '(N/A)',
-      'Anniversary Date': contact.anniversary_date || '(N/A)',
+      'Anniversary Date (Home Anniv.)': contact.anniversary_date || '(N/A)',
       'Tags': contact.tags.join(', ')
     });
 

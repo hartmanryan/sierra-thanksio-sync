@@ -31,6 +31,53 @@ async function fetchLeadFromSierra(leadId) {
 }
 
 /**
+ * Helper to scan and extract anniversary date from custom field 'Home Anniv.', 'Home Anniv',
+ * 'homeAnniversaryDate', changes array, customFields object/array, or any key matching /anniv/i.
+ */
+function findAnniversaryInPayload(payload, data) {
+  // 1. Direct property checks
+  const direct = data?.['Home Anniv.'] || data?.['Home Anniv'] || data?.homeAnniv || data?.home_anniv ||
+                 data?.homeAnniversaryDate || data?.homeAnniversary || data?.birthDate || data?.birthdate ||
+                 data?.anniversaryDate || data?.closeAnniversaryDate || data?.anniversary ||
+                 payload?.['Home Anniv.'] || payload?.['Home Anniv'] || payload?.homeAnniv || payload?.home_anniv ||
+                 payload?.homeAnniversaryDate || payload?.homeAnniversary || payload?.data?.['Home Anniv.'] || payload?.data?.['Home Anniv'];
+  if (direct) return direct;
+
+  // 2. Check changes array in webhook payload
+  if (Array.isArray(payload?.data?.changes)) {
+    const changeMatch = payload.data.changes.find(c => /anniv|anniversary/i.test(c.key || c.name || ''));
+    if (changeMatch && changeMatch.value) return changeMatch.value;
+  }
+  if (Array.isArray(payload?.changes)) {
+    const changeMatch = payload.changes.find(c => /anniv|anniversary/i.test(c.key || c.name || ''));
+    if (changeMatch && changeMatch.value) return changeMatch.value;
+  }
+
+  // 3. Check customFields array or object
+  const customFields = data?.customFields || payload?.customFields || data?.custom_fields || payload?.custom_fields || payload?.data?.customFields;
+  if (Array.isArray(customFields)) {
+    const match = customFields.find(cf => /anniv|anniversary/i.test(cf.name || cf.key || cf.label || ''));
+    if (match) return match.value || match.val || match.defaultValue;
+  } else if (customFields && typeof customFields === 'object') {
+    const keys = Object.keys(customFields);
+    const matchKey = keys.find(k => /anniv|anniversary/i.test(k));
+    if (matchKey) return customFields[matchKey];
+  }
+
+  // 4. Fallback search across all root keys of data and payload for any key containing 'anniv'
+  const allObj = { ...payload, ...payload?.data, ...data };
+  for (const k of Object.keys(allObj)) {
+    if (/anniv|anniversary/i.test(k) && allObj[k]) {
+      const val = allObj[k];
+      if (typeof val === 'string' || typeof val === 'number') return val;
+      if (typeof val === 'object' && (val.value || val.val)) return val.value || val.val;
+    }
+  }
+
+  return '';
+}
+
+/**
  * Extract and normalize contact data from Sierra Interactive webhook or API payload.
  */
 function extractContactDetails(payload) {
@@ -79,7 +126,7 @@ function extractContactDetails(payload) {
     phone = data.cellPhone || data.mobilePhone || data.workPhone || '';
   }
 
-  // Address components (checks data.streetAddress directly as returned by Sierra API)
+  // Address components
   const addressObj = data.primaryAddress || data.addressDetails || (typeof data.address === 'object' ? data.address : {});
   let streetAddress = data.streetAddress || data.street_address || (typeof data.address === 'string' ? data.address : '');
   let city = data.city || '';
@@ -93,25 +140,9 @@ function extractContactDetails(payload) {
     if (!zip) zip = addressObj.zipCode || addressObj.zip || addressObj.postalCode || '';
   }
 
-  // Anniversary Date
-  let anniversaryDate = data.homeAnniversaryDate || 
-                        data.anniversaryDate || 
-                        data.closeAnniversaryDate || 
-                        data.anniversary || 
-                        '';
-
-  if (!anniversaryDate && data.customFields) {
-    if (Array.isArray(data.customFields)) {
-      const match = data.customFields.find(cf => 
-        /anniversary/i.test(cf.name || cf.key || '')
-      );
-      if (match) anniversaryDate = match.value;
-    } else if (typeof data.customFields === 'object') {
-      const keys = Object.keys(data.customFields);
-      const matchKey = keys.find(k => /anniversary/i.test(k));
-      if (matchKey) anniversaryDate = data.customFields[matchKey];
-    }
-  }
+  // Anniversary Date parsing (specifically targets 'Home Anniv.' from custom fields/payload)
+  let rawAnniversaryDate = findAnniversaryInPayload(payload, data);
+  let anniversaryDate = rawAnniversaryDate ? String(rawAnniversaryDate).trim() : '';
 
   if (anniversaryDate) {
     try {
@@ -138,12 +169,14 @@ function extractContactDetails(payload) {
     city: city.trim(),
     state: state.trim(),
     zip: zip.trim(),
-    anniversary_date: anniversaryDate ? String(anniversaryDate).trim() : '',
+    anniversary_date: anniversaryDate,
+    raw_anniversary: rawAnniversaryDate,
     tags: tagList
   };
 }
 
 module.exports = {
   fetchLeadFromSierra,
-  extractContactDetails
+  extractContactDetails,
+  findAnniversaryInPayload
 };
