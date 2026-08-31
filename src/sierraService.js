@@ -35,7 +35,7 @@ async function fetchLeadFromSierra(leadId) {
 
 /**
  * Helper to scan and extract anniversary date specifically from 'Home Anniv.', 'Home Anniv',
- * 'homeAnniversaryDate', 'birthDate', changes array, or customFields matching /home\s*anniv|anniversary/i.
+ * 'homeAnniversaryDate', 'birthDate', changes array, or customFields matching /anniv|anniversary|birth/i.
  */
 function findAnniversaryInPayload(payload, data) {
   // 1. Direct property checks on lead object or payload
@@ -49,18 +49,20 @@ function findAnniversaryInPayload(payload, data) {
   // 2. Check changes array in LeadDetailsChanged webhook payload
   const changes = payload?.data?.changes || payload?.changes;
   if (Array.isArray(changes)) {
-    const changeMatch = changes.find(c => /home\s*anniv|anniversary/i.test(c.key || c.name || ''));
-    if (changeMatch && changeMatch.value) return changeMatch.value;
+    const changeMatch = changes.find(c => /anniv|anniversary|birth/i.test(c.key || c.name || c.label || ''));
+    if (changeMatch && (changeMatch.value || changeMatch.val || changeMatch.newValue)) {
+      return changeMatch.value || changeMatch.val || changeMatch.newValue;
+    }
   }
 
   // 3. Check customFields array or object
   const customFields = data?.customFields || payload?.customFields || data?.custom_fields || payload?.custom_fields || payload?.data?.customFields;
   if (Array.isArray(customFields)) {
-    const match = customFields.find(cf => /home\s*anniv|anniversary/i.test(cf.name || cf.key || cf.label || ''));
+    const match = customFields.find(cf => /anniv|anniversary|birth/i.test(cf.name || cf.key || cf.label || ''));
     if (match) return match.value || match.val || match.defaultValue;
   } else if (customFields && typeof customFields === 'object') {
     const keys = Object.keys(customFields);
-    const matchKey = keys.find(k => /home\s*anniv|anniversary/i.test(k));
+    const matchKey = keys.find(k => /anniv|anniversary|birth/i.test(k));
     if (matchKey) return customFields[matchKey];
   }
 
